@@ -2,18 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:student_task_manager/screens/home_screen.dart';
-import 'package:student_task_manager/screens/signup_screen.dart';
-
-class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+import 'package:student_task_manager/screens/login_screen.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+class SignupScreen extends StatefulWidget {
+  const SignupScreen({super.key});
 
   @override
-  State<LoginScreen> createState() => _LoginScreenState();
+  State<SignupScreen> createState() => _SignupScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
+class _SignupScreenState extends State<SignupScreen> {
   final _formKey = GlobalKey<FormState>();
 
+  final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
 
@@ -33,8 +34,7 @@ class _LoginScreenState extends State<LoginScreen> {
   // ------------------------------------------------------------
   // EMAIL / PASSWORD LOGIN
   // ------------------------------------------------------------
-
-  Future<void> _loginWithEmail() async {
+  Future<void> _signupWithEmail() async {
     if (!_formKey.currentState!.validate()) {
       return;
     }
@@ -44,36 +44,56 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
+      // 1. Create Firebase Authentication account
       final UserCredential userCredential = await _auth
-          .signInWithEmailAndPassword(
+          .createUserWithEmailAndPassword(
             email: _emailController.text.trim(),
             password: _passwordController.text.trim(),
           );
 
+      final User? user = userCredential.user;
+
+      if (user == null) {
+        throw Exception('User account could not be created.');
+      }
+
+      // 2. Update Firebase Auth display name
+      await user.updateDisplayName(_nameController.text.trim());
+
+      // 3. Save user information in Firestore
+      await FirebaseFirestore.instance.collection('users').doc(user.uid).set({
+        'uid': user.uid,
+        'name': _nameController.text.trim(),
+        'email': user.email,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
       if (!mounted) return;
 
-      final user = userCredential.user;
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Welcome ${user?.displayName ?? user?.email ?? 'User'}',
-          ),
-        ),
-      );
-
-      // Navigate to your home screen here.
-
+      // 4. Navigate to Home Screen
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(builder: (_) => const HomeScreen()),
+      );
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Welcome ${_nameController.text.trim()}')),
       );
     } on FirebaseAuthException catch (e) {
       if (!mounted) return;
 
       _showError(_getFirebaseErrorMessage(e));
+    } on FirebaseException catch (e) {
+      if (!mounted) return;
+
+      debugPrint('Firestore Error: ${e.code}');
+      debugPrint('Firestore Message: ${e.message}');
+
+      _showError('Database error: ${e.message ?? e.code}');
     } catch (e) {
       if (!mounted) return;
+
+      debugPrint('Signup Error: $e');
 
       _showError('Something went wrong. Please try again.');
     } finally {
@@ -272,7 +292,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     // TITLE
                     // ------------------------------------------------
                     const Text(
-                      'Welcome Back',
+                      'Create a new account',
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 32,
@@ -284,13 +304,27 @@ class _LoginScreenState extends State<LoginScreen> {
                     const SizedBox(height: 8),
 
                     const Text(
-                      'Sign in to continue to your account',
+                      'Sign up to create your account',
                       textAlign: TextAlign.center,
                       style: TextStyle(fontSize: 16, color: Color(0xFF6B7280)),
                     ),
-
+                    // Profile Name
                     const SizedBox(height: 40),
+                    _buildTextField(
+                      controller: _nameController,
+                      hintText: 'Full Name',
+                      icon: Icons.person_2_outlined,
+                      keyboardType: TextInputType.emailAddress,
+                      validator: (value) {
+                        if (value == null || value.trim().isEmpty) {
+                          return 'Please enter your full name';
+                        }
 
+                        return null;
+                      },
+                    ),
+
+                    const SizedBox(height: 18),
                     // ------------------------------------------------
                     // EMAIL
                     // ------------------------------------------------
@@ -337,7 +371,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
                       validator: (value) {
                         if (value == null || value.isEmpty) {
-                          return 'Please enter your password';
+                          return 'Please enter new password';
                         }
 
                         if (value.length < 6) {
@@ -348,26 +382,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       },
                     ),
 
-                    const SizedBox(height: 8),
-
-                    // ------------------------------------------------
-                    // FORGOT PASSWORD
-                    // ------------------------------------------------
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: TextButton(
-                        onPressed: _forgotPassword,
-                        child: const Text(
-                          'Forgot Password?',
-                          style: TextStyle(
-                            color: Color(0xFF5B5FEF),
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
-
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 16),
 
                     // ------------------------------------------------
                     // SIGN IN BUTTON
@@ -377,7 +392,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       child: ElevatedButton(
                         onPressed: _isLoading || _isGoogleLoading
                             ? null
-                            : _loginWithEmail,
+                            : _signupWithEmail,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFF5B5FEF),
                           foregroundColor: Colors.white,
@@ -397,7 +412,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                 ),
                               )
                             : const Text(
-                                'Sign In',
+                                'Sign Up',
                                 style: TextStyle(
                                   fontSize: 17,
                                   fontWeight: FontWeight.bold,
@@ -457,7 +472,6 @@ class _LoginScreenState extends State<LoginScreen> {
                             : Row(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                                  // Google logo
                                   _googleLogo(),
 
                                   const SizedBox(width: 12),
@@ -484,7 +498,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
                         Text(
-                          "Don't have an account? ",
+                          "Already have an account? ",
                           style: TextStyle(
                             color: Colors.grey.shade600,
                             fontSize: 15,
@@ -492,16 +506,15 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                         GestureDetector(
                           onTap: () {
-                            // Navigate to SignUpScreen
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (context) => SignupScreen(),
+                                builder: (context) => LoginScreen(),
                               ),
                             );
                           },
                           child: const Text(
-                            'Sign Up',
+                            'Sign In',
                             style: TextStyle(
                               color: Color(0xFF5B5FEF),
                               fontSize: 15,
